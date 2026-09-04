@@ -7,43 +7,15 @@ import torch
 import torch.nn as nn
 
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from torch.nn import (
-    Conv3d,
-    Conv2d,
-    MaxPool3d,
-    MaxPool2d,
-    ConvTranspose3d,
-    ConvTranspose2d,
-)
+from torch.nn import Conv3d, Conv2d, MaxPool3d, MaxPool2d, ConvTranspose3d, ConvTranspose2d
 from torch.nn import LSTM
 
 import pytorch_lightning as pl
 
 
-def get_cnn_temporal_denoiser(spatial_dim: int, use_transformer: bool = True, **kwargs):
-    """
-    Returns a CNN-Temporal Denoiser model based on user input.
-
-    Parameters
-    ----------
-    spatial_dim : int
-        Dimensionality of the spatial data (2 for 2D+t, 3 for 3D+t).
-    use_transformer : bool, optional
-        If True, use a Transformer for temporal correlations, otherwise use ConvLSTM, by default True.
-
-    Returns
-    -------
-    CNNTemporalDenoiser
-        An instance of the hybrid CNN-Temporal Denoiser model.
-    """
-    return CNNTemporalDenoiser(
-        spatial_dim=spatial_dim, use_transformer=use_transformer, **kwargs
-    )
-
-
 class SpatialCNN(nn.Module):
     """2D or 3D CNN for spatial feature extraction."""
-
+    
     def __init__(self, in_channels: int, spatial_dim: int, filters: int = 64):
         """
         Initialize the spatial CNN.
@@ -56,19 +28,19 @@ class SpatialCNN(nn.Module):
             Dimensionality of the spatial data (2 or 3 for 2D+t or 3D+t respectively).
         filters : int, optional
             Number of filters in the first convolution layer, by default 64.
-
+            
         """
         super().__init__()
         if spatial_dim == 2:
             self.conv1 = Conv2d(in_channels, filters, kernel_size=3, padding=1)
             self.pool = MaxPool2d(2)
-            self.conv2 = Conv2d(filters, filters * 2, kernel_size=3, padding=1)
-            self.upconv = ConvTranspose2d(filters * 2, filters, kernel_size=2, stride=2)
+            self.conv2 = Conv2d(filters, filters*2, kernel_size=3, padding=1)
+            self.upconv = ConvTranspose2d(filters*2, filters, kernel_size=2, stride=2)
         else:
             self.conv1 = Conv3d(in_channels, filters, kernel_size=3, padding=1)
             self.pool = MaxPool3d(2)
-            self.conv2 = Conv3d(filters, filters * 2, kernel_size=3, padding=1)
-            self.upconv = ConvTranspose3d(filters * 2, filters, kernel_size=2, stride=2)
+            self.conv2 = Conv3d(filters, filters*2, kernel_size=3, padding=1)
+            self.upconv = ConvTranspose3d(filters*2, filters, kernel_size=2, stride=2)
 
     def forward(self, x):
         x = self.pool(torch.relu(self.conv1(x)))
@@ -79,7 +51,7 @@ class SpatialCNN(nn.Module):
 
 class TemporalTransformer(nn.Module):
     """Transformer for capturing temporal correlations."""
-
+    
     def __init__(self, d_model: int, nhead: int, num_layers: int, dim_feedforward: int):
         """
         Initialize the temporal transformer.
@@ -94,6 +66,7 @@ class TemporalTransformer(nn.Module):
             Number of layers in the transformer encoder.
         dim_feedforward : int
             Dimension of the feedforward network model.
+            
         """
         super().__init__()
         encoder_layers = TransformerEncoderLayer(d_model, nhead, dim_feedforward)
@@ -107,14 +80,8 @@ class TemporalTransformer(nn.Module):
 
 class ConvLSTM(nn.Module):
     """ConvLSTM for capturing temporal correlations."""
-
-    def __init__(
-        self,
-        input_size: int,
-        hidden_size: int,
-        num_layers: int,
-        batch_first: bool = True,
-    ):
+    
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int, batch_first: bool = True):
         """
         Initialize the ConvLSTM model.
 
@@ -141,19 +108,9 @@ class ConvLSTM(nn.Module):
 class CNNTemporalDenoiser(pl.LightningModule):
     """Hybrid model with spatial CNN and temporal Transformer/ConvLSTM."""
 
-    def __init__(
-        self,
-        in_channels: int,
-        spatial_dim: int,
-        use_transformer: bool = True,
-        filters: int = 64,
-        d_model: int = 64,
-        nhead: int = 4,
-        num_layers: int = 2,
-        dim_feedforward: int = 256,
-        temporal_hidden_size: int = 64,
-        num_temporal_layers: int = 2,
-    ):
+    def __init__(self, in_channels: int, spatial_dim: int, use_transformer: bool = True, filters: int = 64,
+                 d_model: int = 64, nhead: int = 4, num_layers: int = 2, dim_feedforward: int = 256,
+                 temporal_hidden_size: int = 64, num_temporal_layers: int = 2):
         """
         Initialize the hybrid CNN-Temporal Denoiser model.
 
@@ -185,20 +142,18 @@ class CNNTemporalDenoiser(pl.LightningModule):
         self.use_transformer = use_transformer
 
         if use_transformer:
-            self.temporal = TemporalTransformer(
-                d_model, nhead, num_layers, dim_feedforward
-            )
+            self.temporal = TemporalTransformer(d_model, nhead, num_layers, dim_feedforward)
         else:
             self.temporal = ConvLSTM(d_model, temporal_hidden_size, num_temporal_layers)
 
     def forward(self, x):
         # Spatial feature extraction (2D+t or 3D+t)
         spatial_features = self.spatial_cnn(x)
-
+        
         # Permute to (batch, time, feature_dim) for temporal processing
         time_dim = -1 if x.dim() == 4 else -2  # based on spatial dimension
-        temporal_input = spatial_features.permute(0, time_dim, *range(1, time_dim))
-
+        temporal_input = spatial_features.permute(0, time_dim, *range(1, time_dim))  
+        
         # Temporal processing (using Transformer or ConvLSTM)
         temporal_output = self.temporal(temporal_input)
 
