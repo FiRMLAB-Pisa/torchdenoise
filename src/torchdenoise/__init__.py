@@ -19,6 +19,7 @@ from importlib.metadata import version as _distribution_version
 
 from ._adapt import ComplexMode, spatial_apply
 from ._classical import TGV, TV, Bilateral, Median, Wavelet, WaveletDict
+from ._llr import LLR
 
 try:
     __version__ = _distribution_version(__name__)
@@ -26,6 +27,7 @@ except PackageNotFoundError:  # a source tree that was never installed
     __version__ = "0.0.0.dev0"
 
 __all__ = [
+    "LLR",
     "TGV",
     "TV",
     "Bilateral",

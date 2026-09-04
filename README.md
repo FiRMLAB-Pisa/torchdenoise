@@ -31,6 +31,13 @@ these wrappers add, and all they add.
   that is a memory nobody asked for; it is reset per call, and `warm_start`
   opts back in
 
+The locally low-rank denoiser is the opposite case: it is the correlation
+*between* contrasts that it uses. Within a small spatial block the signal
+across contrasts is nearly the same curve scaled, so the block's matrix is
+close to low rank while noise is not, and shrinking its singular values removes
+what does not fit that description. Blocks overlap and the grid shifts between
+calls, because without one or the other the block edges show as a lattice.
+
 ## Quick Start
 
 ```bash
@@ -46,6 +53,12 @@ volume = torch.rand(8, 20, 256, 256, dtype=torch.complex64)  # frames, slices, y
 Wavelet()(volume, sigma=0.05)                  # per slice and frame
 Wavelet(spatial_dims=3)(volume, sigma=0.05)    # per frame, coupling slices
 TV(iterations=50)(volume, sigma=0.05)          # complex through the adapter
+
+from torchdenoise import LLR
+
+series = torch.rand(5, 64, 256, 256)           # coefficients, slices, y, x
+LLR(spatial_dims=2, block_size=8)(series, sigma=0.05)
+LLR(spatial_dims=3, block_size=8, stride=4)(series, sigma=0.05)  # overlapping
 ```
 
 ## Related Works
