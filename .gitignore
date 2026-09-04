@@ -1,25 +1,28 @@
-*.npy
+__pycache__/
+*.py[cod]
+*.so
+.Python
 build/
 dist/
+wheelhouse/
 *.egg-info/
-**/.ipynb_checkpoints/
-examples/*.ipynb
-*.xml
-.coverage*
-.vscode
+.eggs/
 
+.venv/
+venv/
+.env
 
-.idea
-*.log
-tmp/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
-*_cache/
-*.py[cod]
-*.egg
-*.nbi
-*.nbc
+.idea/
+.vscode/
+.DS_Store
 
-docs/generated/
-docs_build/
-
-src/pulserver/_version.py
+# Benchmark inputs are fetched, never committed.
+data/

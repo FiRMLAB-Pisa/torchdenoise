@@ -42,7 +42,10 @@ class _Thresholded(torch.nn.Module):
         self.warm_start = warm_start
 
     def forward(
-        self, x: torch.Tensor, sigma: float | torch.Tensor | None = None, **kwargs: object
+        self,
+        x: torch.Tensor,
+        sigma: float | torch.Tensor | None = None,
+        **kwargs: object,
     ) -> torch.Tensor:
         """Denoise, naming the level whichever way the inner denoiser wants."""
         if not self.warm_start:
@@ -129,8 +132,11 @@ class Wavelet(_Classical):
         **kwargs: Any,
     ) -> None:
         self._settings = dict(
-            wvdim=spatial_dims, wv=wavelet, level=level,
-            non_linearity=non_linearity, **kwargs,
+            wvdim=spatial_dims,
+            wv=wavelet,
+            level=level,
+            non_linearity=non_linearity,
+            **kwargs,
         )
         super().__init__(
             _models().WaveletDenoiser(is_complex=False, **self._settings),
@@ -182,9 +188,7 @@ class WaveletDict(_Classical):
         model = _models().WaveletDictDenoiser(
             wvdim=spatial_dims, list_wv=list(wavelets), level=level, **kwargs
         )
-        super().__init__(
-            model, spatial_dims=spatial_dims, complex_mode="real_imag"
-        )
+        super().__init__(model, spatial_dims=spatial_dims, complex_mode="real_imag")
 
 
 class TV(_Classical):
