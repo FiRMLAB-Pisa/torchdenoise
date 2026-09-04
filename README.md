@@ -38,6 +38,15 @@ close to low rank while noise is not, and shrinking its singular values removes
 what does not fit that description. Blocks overlap and the grid shifts between
 calls, because without one or the other the block edges show as a lattice.
 
+![locally low rank on Deli-CS](examples/figures/llr_delics.png)
+
+Five subspace coefficients over a 256³ volume — 0.62 GiB, acquired in two
+minutes — denoised together in 10 s on a laptop GPU, with the data staying on
+the host. The coefficients are the low-rank axis: the denoiser sees one matrix
+per block with a row per coefficient, so what it removes is what does not fit a
+few curves shared across them. The data is not in this repository; the figure
+is.
+
 ## Quick Start
 
 ```bash
