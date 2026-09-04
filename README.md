@@ -40,12 +40,13 @@ calls, because without one or the other the block edges show as a lattice.
 
 ![locally low rank on Deli-CS](examples/figures/llr_delics.png)
 
-Five subspace coefficients over a 256³ volume — 0.62 GiB, acquired in two
-minutes — denoised together in 10 s on a laptop GPU, with the data staying on
-the host. The coefficients are the low-rank axis: the denoiser sees one matrix
-per block with a row per coefficient, so what it removes is what does not fit a
-few curves shared across them. The data is not in this repository; the figure
-is.
+The five subspace coefficients of a 256³ volume — 0.62 GiB, acquired in two
+minutes — denoised *together* in 2.4 s on a laptop GPU, with the data staying on
+the host. The coefficients are the low-rank axis: within each block the denoiser
+sees one matrix with a row per coefficient, so what it removes is what does not
+fit a few curves shared across them. Each coefficient carries its own contrast,
+which is why they are shown separately rather than combined into one image. The
+data is not in this repository; the figure is.
 
 ## Quick Start
 
