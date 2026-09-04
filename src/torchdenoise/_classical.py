@@ -255,6 +255,7 @@ class TV(_Classical):
     def __init__(
         self,
         *,
+        spatial_dims: int = 2,
         complex_mode: ComplexMode = "real_imag",
         iterations: int = 100,
         warm_start: bool = False,
@@ -266,7 +267,10 @@ class TV(_Classical):
             warm_start=warm_start,
         )
         super().__init__(
-            model, spatial_dims=2, complex_mode=complex_mode, device=device
+            model,
+            spatial_dims=spatial_dims,
+            complex_mode=complex_mode,
+            device=device,
         )
 
 
@@ -284,6 +288,7 @@ class TGV(_Classical):
     def __init__(
         self,
         *,
+        spatial_dims: int = 2,
         complex_mode: ComplexMode = "real_imag",
         iterations: int = 100,
         warm_start: bool = False,
@@ -295,7 +300,10 @@ class TGV(_Classical):
             warm_start=warm_start,
         )
         super().__init__(
-            model, spatial_dims=2, complex_mode=complex_mode, device=device
+            model,
+            spatial_dims=spatial_dims,
+            complex_mode=complex_mode,
+            device=device,
         )
 
 
