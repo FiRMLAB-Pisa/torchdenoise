@@ -21,7 +21,18 @@ from collections.abc import Sequence
 
 import torch
 
+from ._dispatch import USABLE_FRACTION, available_devices, free_bytes, run_chunked
+
 __all__ = ["LLR"]
+
+# What a batched Hermitian eigendecomposition costs on CUDA, per matrix. It is
+# measured, and it is the whole footprint: the block extraction that looks
+# expensive is 0.08 GiB where the decomposition of the same blocks is 8.57, and
+# the cost per matrix is the same for a 5x5 as for an 8x8, so it is workspace
+# rather than arithmetic. Taking the singular values directly instead is 60
+# times lighter and 1700 times slower, which is no escape; the batch is bounded
+# instead.
+EIGH_WORKSPACE_PER_MATRIX = 560 << 10
 
 
 def _per_axis(
@@ -52,8 +63,15 @@ class LLR(torch.nn.Module):
         Shift the block grid by one voxel per call, so the lattice a fixed grid
         leaves does not survive several passes of an iterative reconstruction.
     block_batch_size
-        How many blocks are decomposed at once. ``None`` does all of them,
-        which is fastest and needs the most memory.
+        How many blocks are decomposed at once. This is the footprint: block
+        extraction materialises ``entries x blocks x contrasts x block_voxels``,
+        which turns 40 MiB of data into gigabytes of workspace. ``"auto"``
+        solves for the largest batch the device has room for, which is also the
+        fastest; ``None`` does every block at once regardless.
+    device
+        Where to run. ``"auto"`` uses every visible CUDA device for
+        host-resident data, dealing chunks out between them, and leaves the
+        work where it is when there is no card.
 
     Examples
     --------
@@ -71,17 +89,20 @@ class LLR(torch.nn.Module):
         block_size: int | Sequence[int] = 8,
         stride: int | Sequence[int] | None = None,
         cycle_spins: bool = True,
-        block_batch_size: int | None = 1024,
+        block_batch_size: int | str | None = "auto",
+        device: str | torch.device | None = "auto",
     ) -> None:
         super().__init__()
         if spatial_dims not in (2, 3):
             raise ValueError(f"spatial_dims must be 2 or 3, got {spatial_dims}")
-        if block_batch_size is not None and (
+        if block_batch_size not in (None, "auto") and (
             not isinstance(block_batch_size, int)
             or isinstance(block_batch_size, bool)
             or block_batch_size < 1
         ):
-            raise ValueError("block_batch_size must be a positive integer or None")
+            raise ValueError(
+                "block_batch_size must be a positive integer, None, or 'auto'"
+            )
         self.spatial_dims = spatial_dims
         self.block_size = _per_axis(block_size, spatial_dims, name="block_size")
         self.stride = (
@@ -91,6 +112,7 @@ class LLR(torch.nn.Module):
         )
         self.cycle_spins = cycle_spins
         self.block_batch_size = block_batch_size
+        self.device = device
         self._calls = 0
         self._key: tuple[object, ...] | None = None
         self._grid: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None
@@ -142,6 +164,37 @@ class LLR(torch.nn.Module):
         )
         return self._grid
 
+    def _batch_of_blocks(
+        self,
+        block_count: int,
+        entries: int,
+        contrasts: int,
+        element: int,
+        device: torch.device,
+    ) -> int:
+        """Return the largest number of blocks that will fit, which is also fastest.
+
+        Block extraction is what costs: ``entries x blocks x contrasts x
+        block_voxels``, and about four such tensors are live at once between the
+        gather, the permuted copy and the decomposition's workspace.
+        """
+        if self.block_batch_size != "auto":
+            return self.block_batch_size or block_count
+        if device.type != "cuda":
+            return block_count
+        del contrasts, element  # the workspace does not depend on either
+        matrices = USABLE_FRACTION * free_bytes(device) / EIGH_WORKSPACE_PER_MATRIX
+        return max(1, min(block_count, int(matrices / max(entries, 1))))
+
+    def _bytes_per_entry(self, voxels: int, contrasts: int, element: int) -> int:
+        """Return the data one entry of the leading axis needs on the device.
+
+        Only the data: the decomposition's workspace is bounded separately, by
+        how many blocks are decomposed at once, so it does not constrain how
+        many entries a chunk may hold.
+        """
+        return contrasts * voxels * element * 4
+
     def forward(self, x: torch.Tensor, sigma: float | torch.Tensor) -> torch.Tensor:
         """Denoise a series of any shape.
 
@@ -167,21 +220,52 @@ class LLR(torch.nn.Module):
         original = x.shape
         spatial = tuple(int(size) for size in original[-self.spatial_dims :])
         contrasts = int(original[-needed])
-        x = x.reshape(-1, contrasts, *spatial)
-        batch = x.shape[0]
-
-        shifts = tuple(self._calls % block for block in self.block_size)
-        self._calls += 1
-        origins, offsets, flat_strides = self._coordinates(spatial, x.device)
+        folded = x.reshape(-1, contrasts, *spatial)
+        entries = folded.shape[0]
 
         real_dtype = x.real.dtype
         threshold = torch.as_tensor(sigma, dtype=real_dtype, device=x.device).squeeze()
         if threshold.ndim == 0:
-            threshold = threshold.expand(batch)
-        elif threshold.ndim != 1 or threshold.shape[0] != batch:
+            threshold = threshold.expand(entries)
+        elif threshold.ndim != 1 or threshold.shape[0] != entries:
             raise ValueError("sigma must be a scalar or hold one value per entry")
         if bool(torch.any(threshold < 0)):
             raise ValueError("sigma must be non-negative")
+
+        # The block grid moves once per call, not once per chunk, or chunks
+        # would be denoised on grids offset from one another.
+        shifts = tuple(self._calls % block for block in self.block_size)
+        self._calls += 1
+
+        devices = available_devices(self.device) if folded.device.type == "cpu" else []
+        if not devices or devices[0].type != "cuda":
+            return self._denoise(folded, threshold, shifts).reshape(original)
+
+        voxels = 1
+        for size in spatial:
+            voxels *= size
+
+        def work(chunk: torch.Tensor, device: torch.device, first: int, last: int):
+            return self._denoise(chunk, threshold[first:last].to(device), shifts)
+
+        denoised = run_chunked(
+            work,
+            folded,
+            devices=devices,
+            bytes_per_entry=self._bytes_per_entry(
+                voxels, contrasts, folded.element_size()
+            ),
+        )
+        return denoised.reshape(original)
+
+    def _denoise(
+        self, x: torch.Tensor, threshold: torch.Tensor, shifts: tuple[int, ...]
+    ) -> torch.Tensor:
+        """Shrink every block of a folded, co-located batch."""
+        batch, contrasts = x.shape[0], x.shape[1]
+        spatial = tuple(int(size) for size in x.shape[2:])
+        origins, offsets, flat_strides = self._coordinates(spatial, x.device)
+        real_dtype = x.real.dtype
 
         flat_input = x.reshape(batch, contrasts, -1)
         output = torch.zeros_like(flat_input)
@@ -197,7 +281,9 @@ class LLR(torch.nn.Module):
             else torch.zeros(output.shape[-1], dtype=real_dtype, device=x.device)
         )
         count = origins.shape[0]
-        per_pass = self.block_batch_size or count
+        per_pass = self._batch_of_blocks(
+            count, batch, contrasts, x.element_size(), x.device
+        )
         shifted = self.cycle_spins and any(shifts)
         if shifted:
             shift = torch.tensor(shifts, dtype=torch.long, device=x.device)
@@ -230,7 +316,7 @@ class LLR(torch.nn.Module):
 
         if weights is not None:
             output = output / weights.clamp_min(torch.finfo(real_dtype).eps)[None, None]
-        return output.reshape(original)
+        return output.reshape(batch, contrasts, *spatial)
 
 
 def _shrink(
