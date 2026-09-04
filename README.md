@@ -71,6 +71,12 @@ LLR(spatial_dims=2, block_size=8)(series, sigma=0.05)
 LLR(spatial_dims=3, block_size=8, stride=4)(series, sigma=0.05)  # overlapping
 ```
 
+## Examples
+
+| | | |
+|---|---|---|
+| [`denoising.ipynb`](examples/denoising.ipynb) | complex data and stacks, 2D against 3D, and what the contrast axis buys | [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/FiRMLAB-Pisa/torchdenoise/blob/main/examples/denoising.ipynb) |
+
 ## Related Works
 
 - **DeepInverse** — <https://deepinv.github.io/>. Every classical denoiser here
