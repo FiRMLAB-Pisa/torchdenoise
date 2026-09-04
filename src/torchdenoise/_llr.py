@@ -60,8 +60,13 @@ class LLR(torch.nn.Module):
         Block extent and the step between block origins, per spatial axis.
         ``stride`` defaults to ``block_size``, which tiles without overlap.
     cycle_spins
-        Shift the block grid by one voxel per call, so the lattice a fixed grid
-        leaves does not survive several passes of an iterative reconstruction.
+        Move the block grid between calls, so the lattice a fixed grid leaves
+        does not survive several passes of an iterative reconstruction. Shifts
+        are random, as in Anderson et al., rather than a fixed cycle: with
+        non-overlapping blocks a deterministic cycle can land back in step with
+        the grid, and randomness costs nothing to avoid it.
+    generator
+        Draws the shifts, for a run that has to repeat exactly.
     block_batch_size
         How many blocks are decomposed at once. This is the footprint: block
         extraction materialises ``entries x blocks x contrasts x block_voxels``,
@@ -91,6 +96,7 @@ class LLR(torch.nn.Module):
         cycle_spins: bool = True,
         block_batch_size: int | str | None = "auto",
         device: str | torch.device | None = "auto",
+        generator: torch.Generator | None = None,
     ) -> None:
         super().__init__()
         if spatial_dims not in (2, 3):
@@ -113,6 +119,7 @@ class LLR(torch.nn.Module):
         self.cycle_spins = cycle_spins
         self.block_batch_size = block_batch_size
         self.device = device
+        self.generator = generator
         self._calls = 0
         self._key: tuple[object, ...] | None = None
         self._grid: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None
@@ -163,6 +170,16 @@ class LLR(torch.nn.Module):
             flat_strides,
         )
         return self._grid
+
+    def _shift(self) -> tuple[int, ...]:
+        """Where to put the block grid this call."""
+        self._calls += 1
+        if not self.cycle_spins:
+            return (0,) * self.spatial_dims
+        return tuple(
+            int(torch.randint(0, block, (1,), generator=self.generator).item())
+            for block in self.block_size
+        )
 
     def _batch_of_blocks(
         self,
@@ -232,10 +249,9 @@ class LLR(torch.nn.Module):
         if bool(torch.any(threshold < 0)):
             raise ValueError("sigma must be non-negative")
 
-        # The block grid moves once per call, not once per chunk, or chunks
-        # would be denoised on grids offset from one another.
-        shifts = tuple(self._calls % block for block in self.block_size)
-        self._calls += 1
+        # The grid moves once per call, not once per chunk, or chunks would be
+        # denoised on grids offset from one another.
+        shifts = self._shift()
 
         devices = available_devices(self.device) if folded.device.type == "cpu" else []
         if not devices or devices[0].type != "cuda":

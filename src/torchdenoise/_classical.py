@@ -15,6 +15,7 @@ from typing import Any
 import torch
 
 from ._adapt import ComplexMode, spatial_apply
+from ._dispatch import available_devices, run_chunked
 
 __all__ = ["TGV", "TV", "Bilateral", "Median", "Wavelet", "WaveletDict"]
 
@@ -65,11 +66,13 @@ class _Classical(torch.nn.Module):
         *,
         spatial_dims: int,
         complex_mode: ComplexMode | None,
+        device: str | torch.device | None = "auto",
     ) -> None:
         super().__init__()
         self.model = model
         self.spatial_dims = spatial_dims
         self.complex_mode = complex_mode
+        self.device = device
 
     def _prepare(self, x: torch.Tensor) -> None:
         """Settle anything about the model that depends on the input."""
@@ -79,6 +82,39 @@ class _Classical(torch.nn.Module):
     ) -> torch.Tensor:
         """Denoise a stack of any shape."""
         self._prepare(x)
+        devices = available_devices(self.device) if x.device.type == "cpu" else []
+        if not devices or devices[0].type != "cuda" or x.ndim <= self.spatial_dims:
+            return self._apply(x, sigma, **kwargs)
+
+        spatial = x.shape[x.ndim - self.spatial_dims :]
+        folded = x.reshape(-1, *spatial)
+        voxels = 1
+        for size in spatial:
+            voxels *= size
+
+        def work(chunk: torch.Tensor, device: torch.device, first: int, last: int):
+            del device, first, last
+            moved = self.model.to(chunk.device)
+            return spatial_apply(
+                moved,
+                chunk,
+                sigma,
+                spatial_dims=self.spatial_dims,
+                complex_mode=self.complex_mode,
+                **kwargs,
+            )
+
+        # Denoisers here hold a transform and a few buffers, not a network, so
+        # what a chunk needs is its own data several times over.
+        denoised = run_chunked(
+            work, folded, devices=devices, bytes_per_entry=voxels * x.element_size() * 8
+        )
+        return denoised.reshape(x.shape)
+
+    def _apply(
+        self, x: torch.Tensor, sigma: float | torch.Tensor, **kwargs: object
+    ) -> torch.Tensor:
+        """Denoise where the data already is."""
         return spatial_apply(
             self.model,
             x,
@@ -129,6 +165,7 @@ class Wavelet(_Classical):
         level: int = 3,
         non_linearity: str = "soft",
         complex_mode: ComplexMode | None = None,
+        device: str | torch.device | None = "auto",
         **kwargs: Any,
     ) -> None:
         self._settings = dict(
@@ -142,6 +179,7 @@ class Wavelet(_Classical):
             _models().WaveletDenoiser(is_complex=False, **self._settings),
             spatial_dims=spatial_dims,
             complex_mode=complex_mode,
+            device=device,
         )
         self._real_model = self.model
         self._complex_model: torch.nn.Module | None = None
@@ -183,12 +221,18 @@ class WaveletDict(_Classical):
         spatial_dims: int = 2,
         wavelets: tuple[str, ...] = ("db4", "db8"),
         level: int = 3,
+        device: str | torch.device | None = "auto",
         **kwargs: Any,
     ) -> None:
         model = _models().WaveletDictDenoiser(
             wvdim=spatial_dims, list_wv=list(wavelets), level=level, **kwargs
         )
-        super().__init__(model, spatial_dims=spatial_dims, complex_mode="real_imag")
+        super().__init__(
+            model,
+            spatial_dims=spatial_dims,
+            complex_mode="real_imag",
+            device=device,
+        )
 
 
 class TV(_Classical):
@@ -214,13 +258,16 @@ class TV(_Classical):
         complex_mode: ComplexMode = "real_imag",
         iterations: int = 100,
         warm_start: bool = False,
+        device: str | torch.device | None = "auto",
         **kwargs: Any,
     ) -> None:
         model = _Thresholded(
             _models().TVDenoiser(n_it_max=iterations, **kwargs),
             warm_start=warm_start,
         )
-        super().__init__(model, spatial_dims=2, complex_mode=complex_mode)
+        super().__init__(
+            model, spatial_dims=2, complex_mode=complex_mode, device=device
+        )
 
 
 class TGV(_Classical):
@@ -240,13 +287,16 @@ class TGV(_Classical):
         complex_mode: ComplexMode = "real_imag",
         iterations: int = 100,
         warm_start: bool = False,
+        device: str | torch.device | None = "auto",
         **kwargs: Any,
     ) -> None:
         model = _Thresholded(
             _models().TGVDenoiser(n_it_max=iterations, **kwargs),
             warm_start=warm_start,
         )
-        super().__init__(model, spatial_dims=2, complex_mode=complex_mode)
+        super().__init__(
+            model, spatial_dims=2, complex_mode=complex_mode, device=device
+        )
 
 
 class Median(_Classical):
@@ -261,10 +311,17 @@ class Median(_Classical):
     """
 
     def __init__(
-        self, *, complex_mode: ComplexMode = "real_imag", **kwargs: Any
+        self,
+        *,
+        complex_mode: ComplexMode = "real_imag",
+        device: str | torch.device | None = "auto",
+        **kwargs: Any,
     ) -> None:
         super().__init__(
-            _models().MedianFilter(**kwargs), spatial_dims=2, complex_mode=complex_mode
+            _models().MedianFilter(**kwargs),
+            spatial_dims=2,
+            complex_mode=complex_mode,
+            device=device,
         )
 
 
@@ -280,10 +337,15 @@ class Bilateral(_Classical):
     """
 
     def __init__(
-        self, *, complex_mode: ComplexMode = "real_imag", **kwargs: Any
+        self,
+        *,
+        complex_mode: ComplexMode = "real_imag",
+        device: str | torch.device | None = "auto",
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             _models().BilateralFilter(**kwargs),
             spatial_dims=2,
             complex_mode=complex_mode,
+            device=device,
         )
