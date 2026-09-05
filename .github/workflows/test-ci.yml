@@ -35,7 +35,9 @@ jobs:
           # Torch's default Linux wheel bundles the CUDA runtime: gigabytes the
           # runner has no disk for and no device to use. Installing the CPU
           # build first is what the rest resolves against.
-          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # torchvision comes from the same index or its compiled ops will not
+          # match the torch they load against.
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           python -m pip install .[dev]
 
       - name: Run the tests
@@ -65,7 +67,9 @@ jobs:
           # Torch's default Linux wheel bundles the CUDA runtime: gigabytes the
           # runner has no disk for and no device to use. Installing the CPU
           # build first is what the rest resolves against.
-          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # torchvision comes from the same index or its compiled ops will not
+          # match the torch they load against.
+          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           python -m pip install .[dev]
       # Exit 5 is "nothing matched", which is also a clean outcome here: the
       # point is that no CUDA-marked test errors on a machine without a device.
