@@ -60,13 +60,13 @@ from torchdenoise import TV, Wavelet
 
 volume = torch.rand(8, 20, 256, 256, dtype=torch.complex64)  # frames, slices, y, x
 
-Wavelet()(volume, sigma=0.05)                  # per slice and frame
-Wavelet(spatial_dims=3)(volume, sigma=0.05)    # per frame, coupling slices
-TV(iterations=50)(volume, sigma=0.05)          # complex through the adapter
+Wavelet()(volume, sigma=0.05)  # per slice and frame
+Wavelet(spatial_dims=3)(volume, sigma=0.05)  # per frame, coupling slices
+TV(iterations=50)(volume, sigma=0.05)  # complex through the adapter
 
 from torchdenoise import LLR
 
-series = torch.rand(5, 64, 256, 256)           # coefficients, slices, y, x
+series = torch.rand(5, 64, 256, 256)  # coefficients, slices, y, x
 LLR(spatial_dims=2, block_size=8)(series, sigma=0.05)
 LLR(spatial_dims=3, block_size=8, stride=4)(series, sigma=0.05)  # overlapping
 ```
